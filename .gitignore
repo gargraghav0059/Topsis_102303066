@@ -1,0 +1,14 @@
+venv/
+test_files/
+.ipynb_checkpoints/
+.env
+__pycache__/
+*.pyc
+*.pyo
+testing.ipynb
+__pycache__/
+uploads/
+dist/
+build/
+*.egg-info/
+*.egg
