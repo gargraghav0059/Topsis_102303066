@@ -3,140 +3,149 @@ import pandas as pd
 import re
 import sys
 
-class topsis:
- 
+
+class TopsisMethod:
     """
-    TOPSIS : Technique for Order of Preference by Similarity to Ideal Solution
-    Steps to be followed :
-    1. Construct the decision matrix from the given data.
-    2. Normalize the decision matrix.
-    3. Construct the weighted normalized decision matrix.
-    4. Determine the ideal and negative-ideal solutions.
-    5. Calculate the separation measures for each alternative.
-    6. Calculate the relative closeness to the ideal solution.
-    7. Rank the alternatives based on the relative closeness.
-    8. Display the results.
+    TOPSIS (Technique for Order Preference by Similarity to Ideal Solution)
+
+    Workflow:
+    1. Read decision matrix
+    2. Normalize values
+    3. Apply weights
+    4. Identify ideal best & worst
+    5. Compute separation distances
+    6. Calculate performance score
+    7. Rank alternatives
     """
-    def __init__(self, file, weights, impacts):
-       
-        # check for proper csv file
-        assert "csv" in f"{file}", "Could not recognize csv file, try checking your input file"
-        self.df = pd.read_csv(file).iloc[:, 1:]
-        self.df_copy_id = pd.read_csv(file).iloc[:, 0]
 
-        # Data Preprocessing
-        
-        # Using regular expressions to extract only numeric values along with floating values
-        for i in self.df:
-            self.df[i] = [re.findall("[0-9]*\.[0-9]+|[0-9]+", str(x))[0] for x in self.df[i]]
-        self.matrix = np.array(self.df, dtype = np.float64)
+    def __init__(self, filename, wts, signs):
 
-        # Check for correct format of matrix
-        assert len(self.matrix.shape) == 2, "Decision matrix a must be 2D"
+        # CSV validation
+        if "csv" not in filename:
+            raise AssertionError("Input file must be a CSV")
 
-        self.rows = len(self.matrix)
-        self.columns = len(self.matrix[0])
-        self.n_matrix = np.array([[0]*self.columns for _ in range(self.rows)], dtype = np.float64)
-        self.w_matrix = np.array([[0]*self.columns for _ in range(self.rows)], dtype = np.float64)
-        self.weights = np.array(weights, dtype = np.float64)
+        raw_data = pd.read_csv(filename)
+        self.identifiers = raw_data.iloc[:, 0]
+        self.data = raw_data.iloc[:, 1:]
 
-        # Check for correct format of weights
-        assert len(self.weights.shape) == 1, "Weights array must be 1D"
-        assert self.weights.size == self.columns, f"Weights array should be of length {self.columns}"
+        # Extract numeric values using regex
+        for col in self.data.columns:
+            self.data[col] = [
+                re.findall(r"[0-9]*\.[0-9]+|[0-9]+", str(val))[0]
+                for val in self.data[col]
+            ]
 
-        self.impacts = np.array(impacts)
-        # Check for correct format of impacts
-        assert len(self.impacts.shape) == 1, "Impact array must be 1D"
-        assert self.impacts.size == self.columns, f"Impacts array should be of length {self.columns}"
+        self.decision_matrix = np.array(self.data, dtype=float)
 
-        self.best = np.array([0]*self.columns, dtype = np.float64)
-        self.worst = np.array([0]*self.columns, dtype = np.float64)
-        self.s_best = np.array([0]*self.rows, dtype = np.float64)
-        self.s_worst = np.array([0]*self.rows, dtype = np.float64)
-        self.p_scores = np.array([0]*self.rows, dtype = np.float64)
+        if len(self.decision_matrix.shape) != 2:
+            raise AssertionError("Decision matrix must be 2-dimensional")
 
-    def normalized_matrix(self):
-        for i in range(self.columns):
-            temp = np.sum(self.matrix[:, i]**2)**0.5
-            self.n_matrix[:, i] = self.matrix[:, i] / temp
+        self.m, self.n = self.decision_matrix.shape
 
-    def weighted_matrix(self):
-        for i in range(self.columns):
-            self.w_matrix[:, i] = self.n_matrix[:, i] * self.weights[i]
+        self.norm_matrix = np.zeros((self.m, self.n))
+        self.weighted_matrix = np.zeros((self.m, self.n))
 
-    def ideal_calculate(self):
-        for i in range(self.columns):
-            if self.impacts[i] == '+':
-                self.best[i] = np.max(self.w_matrix[:, i])
-                self.worst[i] = np.min(self.w_matrix[:, i])
+        self.weights = np.array(wts, dtype=float)
+        self.impacts = np.array(signs)
+
+        if self.weights.ndim != 1 or self.weights.size != self.n:
+            raise AssertionError("Weights must be 1D and match number of criteria")
+
+        if self.impacts.ndim != 1 or self.impacts.size != self.n:
+            raise AssertionError("Impacts must be 1D and match number of criteria")
+
+        self.ideal_best = np.zeros(self.n)
+        self.ideal_worst = np.zeros(self.n)
+
+        self.dist_best = np.zeros(self.m)
+        self.dist_worst = np.zeros(self.m)
+        self.scores = np.zeros(self.m)
+
+    def normalize(self):
+        for j in range(self.n):
+            denom = np.sqrt(np.sum(self.decision_matrix[:, j] ** 2))
+            self.norm_matrix[:, j] = self.decision_matrix[:, j] / denom
+
+    def apply_weights(self):
+        for j in range(self.n):
+            self.weighted_matrix[:, j] = self.norm_matrix[:, j] * self.weights[j]
+
+    def calculate_ideal_solutions(self):
+        for j in range(self.n):
+            if self.impacts[j] == '+':
+                self.ideal_best[j] = np.max(self.weighted_matrix[:, j])
+                self.ideal_worst[j] = np.min(self.weighted_matrix[:, j])
             else:
-                self.best[i] = np.min(self.w_matrix[:, i])
-                self.worst[i] = np.max(self.w_matrix[:, i])
+                self.ideal_best[j] = np.min(self.weighted_matrix[:, j])
+                self.ideal_worst[j] = np.max(self.weighted_matrix[:, j])
 
-    # Step for calculating p_scores 
-    
-    def rank_calculate(self):
-        for i in range(self.rows):
-            self.s_best[i] = np.sum((self.w_matrix[i, :] - self.best)**2)**0.5
-            self.s_worst[i] = np.sum((self.w_matrix[i, :] - self.worst)**2)**0.5
-        self.p_scores = self.s_worst/(self.s_best + self.s_worst)
+    def compute_scores(self):
+        for i in range(self.m):
+            self.dist_best[i] = np.sqrt(
+                np.sum((self.weighted_matrix[i] - self.ideal_best) ** 2)
+            )
+            self.dist_worst[i] = np.sqrt(
+                np.sum((self.weighted_matrix[i] - self.ideal_worst) ** 2)
+            )
 
-        final_scores_sorted = np.argsort(self.p_scores) # gives indices of sorted array
-        max_index = len(final_scores_sorted)
+        self.scores = self.dist_worst / (self.dist_best + self.dist_worst)
 
-        rank = []
-        for i in range(len(final_scores_sorted)):
-            rank.append(max_index - np.where(final_scores_sorted==i)[0][0])
-            
-        print(pd.DataFrame({"Models/id" : self.df_copy_id, "Ranks": np.array(rank)}))
-        print(f"Result : Model/Alternative {np.argsort(self.p_scores)[-1] + 1} is best")
+        order = np.argsort(self.scores)
+        total = len(order)
 
-    def display(self):
-        print('Original Matrix :')
-        print(self.matrix)
-        print('Nomralized Matrix : ')
-        print(self.n_matrix)
-        print('Weighted Matrix : ')
-        print(self.w_matrix)
-        print('Best values : ')
-        print(self.best)
-        print('Worst Values : ')
-        print(self.worst)
-        print('S_best Values : ')
-        print(self.s_best)
-        print('S_worst Values : ')
-        print(self.s_worst)
-        print('Performace Scores : ')
-        print(self.p_scores)
+        ranks = []
+        for idx in range(len(order)):
+            ranks.append(total - np.where(order == idx)[0][0])
 
-    # main topsis functions 
-    def topsis_main(self, debug = False):
-        self.normalized_matrix()
-        self.weighted_matrix()
-        self.ideal_calculate()
-        print()
-        self.rank_calculate()
-        if debug:
-            print()
-            self.display()
+        result = pd.DataFrame({
+            "Models/id": self.identifiers,
+            "Ranks": np.array(ranks)
+        })
 
-# main driver function
-if __name__ == '__main__':
-    print('TOPSIS RANKING ALGORITHM')
-    print('Arguments to be entered in this order : python -m topsis.topsis <InputDataFile> <Weights> <Impacts> <Verbose(optional)>')
+        print(result)
+        print(f"Result : Model/Alternative {np.argmax(self.scores) + 1} is best")
+
+    def show_debug(self):
+        print("\nOriginal Matrix:\n", self.decision_matrix)
+        print("\nNormalized Matrix:\n", self.norm_matrix)
+        print("\nWeighted Matrix:\n", self.weighted_matrix)
+        print("\nIdeal Best:\n", self.ideal_best)
+        print("\nIdeal Worst:\n", self.ideal_worst)
+        print("\nDistance from Best:\n", self.dist_best)
+        print("\nDistance from Worst:\n", self.dist_worst)
+        print("\nPerformance Scores:\n", self.scores)
+
+    def run(self, verbose=False):
+        self.normalize()
+        self.apply_weights()
+        self.calculate_ideal_solutions()
+        self.compute_scores()
+
+        if verbose:
+            self.show_debug()
+
+
+# Driver code
+if __name__ == "__main__":
+
+    print("TOPSIS RANKING ALGORITHM")
+    print("Usage:")
+    print("python -m topsis.topsis <InputFile.csv> <Weights> <Impacts> <Verbose(optional)>")
+
     if len(sys.argv) >= 4:
-        file = sys.argv[1]
-        weights = list(map(float, sys.argv[2].strip().split(',')))
-        impacts = list(sys.argv[3].strip().split(','))
-        print(f"Given csv file : {file} ")
-        print(f"Given weights : {weights}")
-        print(f"Given impacts : {impacts}")
-        t = topsis(file, weights, impacts)
-        if len(sys.argv) == 5:
-            print()
-            t.topsis_main(debug = True)
-        else:
-            t.topsis_main()
-    else:
-        print("Put Arguments in Correct order : python -m topsis.topsis <InputDataFile> <Weights> <Impacts> <Verbose>(optional)>")
+        input_file = sys.argv[1]
+        weight_list = list(map(float, sys.argv[2].split(',')))
+        impact_list = sys.argv[3].split(',')
 
+        print(f"Input file : {input_file}")
+        print(f"Weights    : {weight_list}")
+        print(f"Impacts    : {impact_list}")
+
+        model = TopsisMethod(input_file, weight_list, impact_list)
+
+        if len(sys.argv) == 5:
+            model.run(verbose=True)
+        else:
+            model.run()
+    else:
+        print("Error: Incorrect number of arguments.")
